@@ -298,22 +298,21 @@ framepilot/
 │   │       └── [[...sign-up]]/
 │   │           └── page.tsx        # Clerk sign-up with marketing panel
 │   ├── api/
+│   │   ├── sign-cloudinary-params/
+│   │   │   └── route.ts           # GET — sign a direct browser→Cloudinary upload
 │   │   ├── video-upload/
-│   │   │   └── route.ts           # POST — upload video to Cloudinary + save metadata
-│   │   ├── image-upload/
-│   │   │   └── route.ts           # POST — upload image to Cloudinary
+│   │   │   └── route.ts           # POST — verify uploaded video + save metadata
 │   │   └── videos/
 │   │       └── route.ts           # GET — fetch all videos from database
 │   ├── generated/prisma/          # Auto-generated Prisma client (gitignored)
 │   ├── lib/
-│   │   └── prisma.ts              # Singleton Prisma client with PrismaPg adapter
+│   │   ├── prisma.ts              # Singleton Prisma client with PrismaPg adapter
+│   │   └── uploadToCloudinary.ts  # Browser helper for signed direct uploads
 │   ├── layout.tsx                 # Root layout (ClerkProvider, Inter font)
 │   ├── page.tsx                   # Root redirect → /home
 │   └── globals.css                # Tailwind + daisyUI imports, CSS variables
 ├── components/
 │   └── VideoCard.tsx              # Video card with thumbnail, preview, download
-├── docs/
-│   └── INTERVIEW_GUIDE.md         # Project walkthrough, Q&A, and bug case study
 ├── docs/
 │   └── INTERVIEW_GUIDE.md         # Project walkthrough, Q&A, and bug case study
 ├── prisma/
