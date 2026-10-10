@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useClerk, useUser } from "@clerk/nextjs";
 
 import {
@@ -27,13 +27,8 @@ export default function AppLayout({
 }>) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const router = useRouter();
   const { signOut } = useClerk();
   const { user } = useUser();
-
-  const handleLogoClick = () => {
-    router.push("/");
-  };
 
   const handleSignOut = async () => {
     await signOut();
@@ -61,7 +56,7 @@ export default function AppLayout({
               </label>
             </div>
             <div className="flex-1">
-              <Link href="/" onClick={handleLogoClick}>
+              <Link href="/">
                 <div className="btn btn-ghost normal-case text-2xl font-bold tracking-tight cursor-pointer">
                   Cloudinary Showcase
                 </div>
@@ -72,17 +67,16 @@ export default function AppLayout({
                 <>
                   <div className="avatar">
                     <div className="w-8 h-8 rounded-full">
-                      console.log(user.firstName);
                       <img
                         src={user.imageUrl}
                         alt={
-                          user.firstName || user.emailAddresses[0].emailAddress
+                          user.firstName || user.primaryEmailAddress?.emailAddress || "User avatar"
                         }
                       />
                     </div>
                   </div>
                   <span className="text-sm truncate max-w-xs lg:max-w-md">
-                    {user.username || user.emailAddresses[0].emailAddress}
+                    {user.username || user.primaryEmailAddress?.emailAddress}
                   </span>
                   <button
                     onClick={handleSignOut}
@@ -97,7 +91,7 @@ export default function AppLayout({
           </div>
         </header>
         <main className="grow">
-          <div className="max-w-7xl mx-auto w-fll px-4 sm:px-6 lg:px-8 my-8">
+          <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 my-8">
             {children}
           </div>
         </main>
@@ -130,7 +124,7 @@ export default function AppLayout({
             <div className="p-4">
               <button
                 onClick={handleSignOut}
-                className="btn tbn-outline btn-error w-full"
+                className="btn btn-outline btn-error w-full"
               >
                 <LogOutIcon className="mr-2 h-5 w-5" />
                 Sign Out

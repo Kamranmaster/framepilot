@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useRef } from "react";
 import { CldImage } from "next-cloudinary";
+import { uploadToCloudinary } from "@/app/lib/uploadToCloudinary";
 
 const socialFormats = {
   instagram: {
@@ -35,10 +36,6 @@ const socialFormats = {
   },
 };
 
-type UploadImageResponse = {
-  publicId: string;
-};
-
 export default function SocialShare() {
   const [uploadedImage, setUploadImage] = useState<string | null>(null);
 
@@ -57,21 +54,12 @@ export default function SocialShare() {
     const file = event.target.files?.[0];
     if (!file) return;
     setisUploading(true);
-    const formData = new FormData();
-    formData.append("file", file);
 
     try {
-      const response = await fetch("/api/image-upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error("Failed to upload image");
-
-      const data = (await response.json()) as UploadImageResponse;
+      const result = await uploadToCloudinary(file, "image");
 
       setIsTransforming(true);
-      setUploadImage(data.publicId);
+      setUploadImage(result.public_id);
     } catch (err) {
       console.log(err);
       alert("Failed to upload image");
@@ -84,7 +72,10 @@ export default function SocialShare() {
     if (!imageRef.current) return;
 
     fetch(imageRef.current.src)
-      .then((response) => response.blob())
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to download image");
+        return response.blob();
+      })
       .then((blob) => {
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -98,6 +89,10 @@ export default function SocialShare() {
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
+      })
+      .catch((err) => {
+        console.log(err);
+        alert("Failed to download image");
       });
   };
 
@@ -123,6 +118,7 @@ export default function SocialShare() {
             </label>
             <input
               type="file"
+              accept="image/*"
               onChange={handleFileUpload}
               className="file-input file-input-bordered file-input-primary w-full"
             />
@@ -166,7 +162,7 @@ export default function SocialShare() {
                 <h3 className="text-lg font-semibold mb-2">Preview:</h3>
                 <div className="flex justify-center">
                   {isTransforming && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-base-100 bg-opacity-50 z-10">
+                    <div className="absolute inset-0 flex items-center justify-center bg-base-100/50 z-10">
                       <span className="loading loading-spinner loading-lg"></span>
                     </div>
                   )}

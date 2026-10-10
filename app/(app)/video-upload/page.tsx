@@ -1,6 +1,7 @@
 "use client";
 import React,{useState} from "react";
 import axios from 'axios'
+import { uploadToCloudinary } from "@/app/lib/uploadToCloudinary";
 
 function VideoUpload() {
   const [file,setFile]=useState<File|null>(null)
@@ -8,6 +9,7 @@ function VideoUpload() {
   const[description,setDescription]=useState("")
   const[isUplaoding,setIsUploading]=useState(false)
   const [Notification,setNotification]=useState<string|null>(null)
+  const [progress,setProgress]=useState(0)
 
 
   const MAX_FILE_SIZE=70*1024*1024 // 70MB
@@ -25,22 +27,23 @@ function VideoUpload() {
     }
 
     setIsUploading(true)
-
-    const formData=new FormData()
-    formData.append("file",file)
-    formData.append("title",title)
-    formData.append("description",description)
-    formData.append("originalSize", String(file.size))
-
+    setProgress(0)
 
     try{
-      const response=await axios.post("/api/video-upload",formData)
+      const result=await uploadToCloudinary(file,"video",setProgress)
+
+      const response=await axios.post("/api/video-upload",{
+        title,
+        description,
+        publicId:result.public_id,
+        originalSize:file.size,
+      })
 
       if(response.status === 200){
         setNotification("Video uploaded successfully.");
       }
-      
-      
+
+
     }catch(error){
       console.log(error);
       setNotification("Failed to upload video.");
@@ -93,6 +96,10 @@ function VideoUpload() {
 
         </div>
         
+        {isUplaoding && (
+          <progress className="progress progress-primary w-full" value={progress} max={100}></progress>
+        )}
+
         {Notification && (
           <div className="alert alert-info mt-2">
             {Notification}
@@ -104,7 +111,7 @@ function VideoUpload() {
           className="btn btn-primary"
           disabled={isUplaoding}
         >
-          {isUplaoding ? "Uploading..." : "Upload Video"}
+          {isUplaoding ? `Uploading... ${progress}%` : "Upload Video"}
         </button>
         </div>
       </form>

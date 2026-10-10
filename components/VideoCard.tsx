@@ -1,4 +1,4 @@
-import React, { useCallback, useState,useEffect } from "react";
+import React, { useCallback, useState } from "react";
 import { getCldImageUrl, getCldVideoUrl } from "next-cloudinary";
 import { Download, Clock, FileDown, FileUp } from "lucide-react";
 
@@ -59,22 +59,23 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onDownload }) => {
         return `${minutes}:${remainingSeconds.toString().padStart(2,"0")}`
     },[])
 
-    const compressionPercentage=Math.round((1-Number(video.compressedSize)/Number(video.originalSize))*100)
+    const originalSize=Number(video.originalSize)
+    const compressedSize=Number(video.compressedSize)
+    const compressionPercentage=originalSize>0
+        ?Math.round((1-compressedSize/originalSize)*100)
+        :0
 
-    useEffect(()=>{
-        setPreviewError(false);
-    },[isHovered])
 
     const handlePreviewError=()=>{
         setPreviewError(true);
     };
 
     return( 
-        <div className="card bg-base-100 shadow-xl hover:shadow-2xl transiotion-all duration-300"
-        onMouseEnter={()=>setisHovered(true)}
+        <div className="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300"
+        onMouseEnter={()=>{setisHovered(true);setPreviewError(false)}}
         onMouseLeave={()=>setisHovered(false)}
         >
-            <figure className="aspect-videp relative">
+            <figure className="aspect-video relative">
                 {isHovered?(
                     previewError?(
                         <div className="w-full h-full flex items-center justify-center bg-gray-200">
@@ -97,10 +98,9 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onDownload }) => {
                         className="w-full h-full object-cover"
                     ></img>
                 )}
-                <div className="absolute bottom-2 right-2 bg-base-100 bg-opacity-70 px-2 py-1 rounded-lg text-sm flex items-center">
-                    <Clock size={16} className="mr-1">
-                        {formatDuration(video.duration)}
-                    </Clock>
+                <div className="absolute bottom-2 right-2 bg-base-100/70 px-2 py-1 rounded-lg text-sm flex items-center">
+                    <Clock size={16} className="mr-1" />
+                    {formatDuration(video.duration)}
                 </div>
             </figure>
             <div className="card-body p-4">
@@ -116,12 +116,16 @@ const VideoCard: React.FC<VideoCardProps> = ({ video, onDownload }) => {
                         <FileUp size={18} className="mr-2 text-primary"/>
                         <div>
                             <div className="font-semibold">Original</div>
-                            <div>{formatSize(Number(video.originalSize))}
-
-                            </div>
+                            <div>{formatSize(originalSize)}</div>
                         </div>
                     </div>
-                    
+                    <div className="flex items-center">
+                        <FileDown size={18} className="mr-2 text-secondary"/>
+                        <div>
+                            <div className="font-semibold">Compressed</div>
+                            <div>{formatSize(compressedSize)}</div>
+                        </div>
+                    </div>
                 </div>
                 <div className="flex justify-between items-center mt-4">
                     <div className="text-sm font-semibold">

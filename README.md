@@ -52,15 +52,18 @@ Users can upload video files (up to 70 MB) through a form that accepts a title, 
 **How it works:**
 
 1. The client validates the file size against a 70 MB limit before submitting.
-2. The file is sent as `FormData` to the `/api/video-upload` endpoint.
-3. The API route authenticates the user via Clerk, then streams the file buffer to Cloudinary using `upload_stream` with `resource_type: "video"` and automatic quality/format transformations (`quality: "auto"`, `fetch_format: "mp4"`).
-4. Cloudinary returns the compressed result including `public_id`, `bytes` (compressed size), and `duration`.
-5. The API creates a `Video` record in PostgreSQL via Prisma, storing both the original file size and the compressed size.
-6. The client displays a success or failure notification.
+2. The client requests a signed upload from `/api/sign-cloudinary-params`. The server (after a Clerk auth check) decides the folder and compression settings (`f_mp4,q_auto`) and signs them with the Cloudinary API secret, which never leaves the server.
+3. The browser uploads the file **directly to Cloudinary** with that signature, showing a live progress bar. The file never passes through a Vercel function, so Vercel's 4.5 MB request body limit does not apply.
+4. Cloudinary compresses the video on upload and returns its `public_id`.
+5. The client sends only the metadata (`title`, `description`, `publicId`, `originalSize`) as JSON to `/api/video-upload`.
+6. The API looks up the asset with the Cloudinary Admin API to get the real compressed size and duration (instead of trusting values from the browser), then creates a `Video` record in PostgreSQL via Prisma.
+7. The client displays a success or failure notification.
 
 **Relevant files:**
-- `app/(app)/video-upload/page.tsx` — Upload form UI
-- `app/api/video-upload/route.ts` — Server-side upload handler
+- `app/(app)/video-upload/page.tsx` — Upload form UI with progress bar
+- `app/lib/uploadToCloudinary.ts` — Browser helper: get signature → upload directly to Cloudinary
+- `app/api/sign-cloudinary-params/route.ts` — Signs upload parameters
+- `app/api/video-upload/route.ts` — Verifies the uploaded asset and saves metadata
 
 ---
 
@@ -72,7 +75,7 @@ The home page displays all uploaded videos in a responsive grid layout (1 column
 - **Thumbnail** — Generated from Cloudinary using `getCldImageUrl` with `crop: "fill"` and `gravity: "auto"`.
 - **Hover preview** — On mouse hover, a 15-second preview clip auto-plays, generated using Cloudinary's `e_preview` transformation (`duration_15:max_seg_9:min_seg_dur_1`). Falls back to a "Preview not available" message on error.
 - **Duration** — Formatted as `MM:SS`.
-- **Original file size** — Displayed using `filesize.js`.
+- **Original and compressed file size** — Displayed using `filesize.js`.
 - **Compression percentage** — Calculated as `(1 - compressedSize / originalSize) * 100`.
 - **Relative timestamp** — "Uploaded 2 hours ago" via `dayjs` with the `relativeTime` plugin.
 - **Download button** — Triggers a download of the full-resolution video (1920×1080) from Cloudinary.
@@ -109,14 +112,14 @@ Users can upload an image and instantly preview it formatted for different socia
 **How it works:**
 
 1. The user uploads an image via the file input.
-2. The image is sent to `/api/image-upload`, which uploads it to Cloudinary and returns the `publicId`.
+2. The image is uploaded directly from the browser to Cloudinary using a signature from `/api/sign-cloudinary-params` (same mechanism as video upload), which returns the `public_id`.
 3. The `CldImage` component from `next-cloudinary` renders the image with the selected platform's dimensions using Cloudinary's `crop: "fill"` and `gravity: "auto"` transformations — all performed server-side by Cloudinary.
 4. Users select a platform/format from a dropdown to see a live preview.
 5. The download button fetches the transformed image as a blob and triggers a browser download with a filename like `instagram-post.png`.
 
 **Relevant files:**
 - `app/(app)/social-share/page.tsx` — Social share page
-- `app/api/image-upload/route.ts` — Image upload handler
+- `app/lib/uploadToCloudinary.ts` — Shared direct-upload helper
 
 ---
 
@@ -135,11 +138,15 @@ After successful authentication, users are redirected to `/home`.
 ```
 User fills form (title, description, file)
   → Client validates file size (≤ 70 MB)
-  → POST /api/video-upload (FormData)
-  → Clerk auth check
-  → File buffer streamed to Cloudinary (video, auto quality, mp4)
-  → Cloudinary returns public_id, bytes, duration
-  → Prisma creates Video record in PostgreSQL
+  → GET /api/sign-cloudinary-params?type=video
+      → Clerk auth check
+      → Server signs { timestamp, folder, transformation } with API secret
+  → Browser POSTs file directly to api.cloudinary.com (progress bar)
+      → Cloudinary compresses (f_mp4, q_auto) and returns public_id
+  → POST /api/video-upload (JSON: title, description, publicId, originalSize)
+      → Clerk auth check
+      → Cloudinary Admin API lookup → real bytes + duration
+      → Prisma creates Video record in PostgreSQL
   → Response: { publicId, videoId }
   → Client shows success notification
 ```
@@ -148,9 +155,8 @@ User fills form (title, description, file)
 
 ```
 User selects image file
-  → POST /api/image-upload (FormData)
-  → Clerk auth check
-  → File buffer streamed to Cloudinary (image)
+  → GET /api/sign-cloudinary-params?type=image (Clerk auth check)
+  → Browser POSTs file directly to api.cloudinary.com
   → Cloudinary returns public_id
   → Client renders CldImage with selected platform dimensions
   → User selects format from dropdown → CldImage re-renders
@@ -181,35 +187,32 @@ User visits any protected route
 │  │  (list)  │  │   (form)     │  │  (transform) │  │
 │  └────┬─────┘  └──────┬───────┘  └──────┬───────┘  │
 └───────┼───────────────┼─────────────────┼───────────┘
-        │               │                 │
-        ▼               ▼                 ▼
-┌─────────────────────────────────────────────────────┐
-│              Next.js API Routes (Server)            │
-│                                                     │
-│  GET /api/videos    POST /api/video-upload           │
-│                     POST /api/image-upload            │
-│                                                     │
-│  ┌──────────────┐  ┌─────────────────────────────┐  │
-│  │ Clerk Auth   │  │ Cloudinary SDK (v2)         │  │
-│  │ (middleware)  │  │ upload_stream → transform   │  │
-│  └──────────────┘  └─────────────────────────────┘  │
-│                                                     │
-│  ┌──────────────────────────────────────────────┐   │
-│  │ Prisma Client (v7) + PrismaPg Adapter        │   │
-│  └───────────────────────┬──────────────────────┘   │
-└──────────────────────────┼──────────────────────────┘
-                           │
-                           ▼
-                 ┌────────────────────┐
-                 │  Neon PostgreSQL   │
-                 │  (Video metadata)  │
-                 └────────────────────┘
+        │               │ small JSON      │       large file
+        │               │ requests only   │       (signed, direct)
+        ▼               ▼                 │            │
+┌─────────────────────────────────────────┼───────┐    │
+│      Next.js API Routes (Vercel)        │       │    │
+│                                         │       │    │
+│  GET  /api/videos                       │       │    │
+│  GET  /api/sign-cloudinary-params ◀─────┘       │    │
+│  POST /api/video-upload (metadata only)         │    │
+│                                                 │    │
+│  Clerk auth · Cloudinary SDK (sign + verify)    │    │
+│  Prisma Client (v7) + PrismaPg Adapter          │    │
+└──────────────────┬──────────────────────────────┘    │
+                   │                                   ▼
+                   ▼                       ┌───────────────────────┐
+         ┌────────────────────┐            │      Cloudinary       │
+         │  Neon PostgreSQL   │            │ storage + compression │
+         │  (Video metadata)  │            │ + CDN delivery        │
+         └────────────────────┘            └───────────────────────┘
 ```
 
 **Key architectural decisions:**
 - **Route Groups** — `(app)` for authenticated pages with a sidebar layout, `(auth)` for sign-in/sign-up with a split-panel layout.
 - **Prisma v7 with PrismaPg adapter** — Uses the new driver adapter pattern instead of the traditional Prisma engine. The database URL is configured in `prisma.config.ts`, not in the schema.
-- **Cloudinary stream upload** — Videos and images are uploaded via `upload_stream` (buffer-based) rather than direct URL upload, keeping files server-side only.
+- **Signed direct-to-Cloudinary uploads** — Files go from the browser straight to Cloudinary. The server only signs the upload (choosing folder and transformations) and saves metadata. This avoids Vercel's 4.5 MB serverless request body limit, saves function execution time, and keeps the API secret on the server. See [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md#the-hardest-bug-uploads-failing-only-in-production) for the full story behind this design.
+- **Server-side verification** — `/api/video-upload` only accepts `publicId`s in the `video-upload/` folder and reads size/duration from Cloudinary itself, so the browser cannot submit fake numbers.
 - **Client-side Clerk middleware** — Defined in `proxy.ts` using `clerkMiddleware`, protecting all routes except `/`, `/home`, `/sign-in`, `/sign-up`, and `GET /api/videos`.
 
 ---
@@ -309,6 +312,10 @@ framepilot/
 │   └── globals.css                # Tailwind + daisyUI imports, CSS variables
 ├── components/
 │   └── VideoCard.tsx              # Video card with thumbnail, preview, download
+├── docs/
+│   └── INTERVIEW_GUIDE.md         # Project walkthrough, Q&A, and bug case study
+├── docs/
+│   └── INTERVIEW_GUIDE.md         # Project walkthrough, Q&A, and bug case study
 ├── prisma/
 │   ├── schema.prisma              # Database schema (Video model)
 │   ├── migrations/                # SQL migration history
@@ -356,48 +363,46 @@ Fetches all videos from the database, ordered by creation date (newest first).
 
 ---
 
-### `POST /api/video-upload`
+### `GET /api/sign-cloudinary-params?type=video|image`
 
-Uploads a video to Cloudinary with automatic compression and saves metadata to the database.
+Returns a signature that lets the browser upload one file directly to Cloudinary. The folder and transformation are fixed on the server, so the client cannot change them.
 
 | Property       | Detail                                        |
 |----------------|-----------------------------------------------|
 | **Auth**       | Required (Clerk)                              |
-| **Content-Type** | `multipart/form-data`                       |
-| **Response**   | `200` — `{ publicId, videoId }`               |
+| **Response**   | `200` — `{ timestamp, folder, transformation?, signature, apiKey, cloudName }` |
 | **Errors**     | `401` — Unauthorized                          |
-|                | `400` — File not found / Invalid original size|
-|                | `500` — Upload failed                         |
+|                | `400` — Invalid upload type                   |
+|                | `500` — Cloudinary is not configured          |
 
-**Request body (FormData):**
-
-| Field          | Type   | Required | Description                   |
-|----------------|--------|----------|-------------------------------|
-| `file`         | File   | Yes      | Video file                    |
-| `title`        | string | Yes      | Video title                   |
-| `description`  | string | No       | Video description             |
-| `originalSize` | string | Yes      | Original file size in bytes   |
+| `type`  | Folder                    | Transformation |
+|---------|---------------------------|----------------|
+| `video` | `video-upload`            | `f_mp4,q_auto` |
+| `image` | `next-cloudinary-uploads` | —              |
 
 ---
 
-### `POST /api/image-upload`
+### `POST /api/video-upload`
 
-Uploads an image to Cloudinary for use in the social share feature.
+Saves a video that the browser has already uploaded to Cloudinary. The route looks the asset up in Cloudinary to get its real compressed size and duration.
 
 | Property       | Detail                                        |
 |----------------|-----------------------------------------------|
 | **Auth**       | Required (Clerk)                              |
-| **Content-Type** | `multipart/form-data`                       |
-| **Response**   | `200` — `{ publicId }`                        |
+| **Content-Type** | `application/json`                          |
+| **Response**   | `200` — `{ publicId, videoId }`               |
 | **Errors**     | `401` — Unauthorized                          |
-|                | `400` — File not found                        |
+|                | `400` — Missing title / invalid publicId / invalid original size |
 |                | `500` — Upload failed                         |
 
-**Request body (FormData):**
+**Request body (JSON):**
 
-| Field  | Type | Required | Description  |
-|--------|------|----------|--------------|
-| `file` | File | Yes      | Image file   |
+| Field          | Type   | Required | Description                                  |
+|----------------|--------|----------|----------------------------------------------|
+| `title`        | string | Yes      | Video title                                  |
+| `description`  | string | No       | Video description                            |
+| `publicId`     | string | Yes      | Cloudinary public ID (must start with `video-upload/`) |
+| `originalSize` | number | Yes      | Original file size in bytes                  |
 
 ---
 
@@ -445,7 +450,7 @@ Route protection is implemented in `proxy.ts` using `clerkMiddleware`:
 
 ### API-Level Auth
 
-The `POST /api/video-upload` and `POST /api/image-upload` endpoints independently verify authentication by calling `auth()` from `@clerk/nextjs/server` and return `401 Unauthorized` if no `userId` is present.
+The `GET /api/sign-cloudinary-params` and `POST /api/video-upload` endpoints independently verify authentication by calling `auth()` from `@clerk/nextjs/server` and return `401 Unauthorized` if no `userId` is present.
 
 ### User Interface
 
@@ -560,6 +565,11 @@ The `build` script in `package.json` runs `prisma generate && next build`, ensur
 2. Add all environment variables from the [Environment Variables](#environment-variables) section to the Vercel project settings.
 3. The build command (`npm run build`) is automatically detected.
 4. `serverExternalPackages: ["@prisma/adapter-pg"]` is configured in `next.config.ts` to ensure the PostgreSQL adapter resolves correctly in the serverless environment.
+5. Run `npx prisma migrate deploy` once against the production database so the `Video` table exists.
+
+### Why uploads bypass Vercel
+
+Vercel serverless functions reject request bodies larger than **4.5 MB** (`413 FUNCTION_PAYLOAD_TOO_LARGE`). Uploading a 70 MB video through an API route works on `localhost` but fails in production. FramePilot therefore uploads files directly from the browser to Cloudinary using signed parameters, and the API routes only handle small JSON requests. Details: [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md#the-hardest-bug-uploads-failing-only-in-production).
 
 ---
 
@@ -568,7 +578,8 @@ The `build` script in `package.json` runs `prisma generate && next build`, ensur
 - **No user-scoped videos** — All uploaded videos are visible to all users. There is no `userId` field on the `Video` model.
 - **No video deletion** — There is no API endpoint or UI to delete uploaded videos.
 - **No pagination** — The `GET /api/videos` endpoint returns all videos without pagination.
-- **70 MB upload limit** — Client-side enforcement only; there is no server-side file size validation.
+- **70 MB upload limit** — Enforced in the browser. Cloudinary's own plan limits (100 MB per video on the free plan) apply on top of that. Videos above 100 MB would need Cloudinary's chunked upload.
+- **Orphaned uploads** — If the metadata request fails after a successful Cloudinary upload, the asset stays in Cloudinary without a database record.
 - **No tests** — The project does not include a test suite.
 
 ---

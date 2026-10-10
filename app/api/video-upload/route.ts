@@ -3,16 +3,11 @@ import {NextRequest, NextResponse} from "next/server";
 import {auth} from '@clerk/nextjs/server';
 
 import { v2 as cloudinary } from "cloudinary";
-import type { UploadApiResponse } from "cloudinary";
 
 import { prisma } from "@/app/lib/prisma";
 
-
-
-interface CloudinaryVideoUploadResult extends UploadApiResponse {
-    duration?:number,
-}
-
+// The browser uploads the video straight to Cloudinary, then calls this
+// route with the publicId so we can save it in the database.
 export async function POST(request:NextRequest) {
     const { userId } = await auth();
 
@@ -21,60 +16,44 @@ export async function POST(request:NextRequest) {
     }
 
     try{
-        const formData=await request.formData();
-        const file=formData.get("file") as File |null;
-        const title=formData.get("title") as string;
-        const description = formData.get("description") as string;
-        const originalSize = Number(formData.get("originalSize") ?? 0);
-      
-        if(!file){
-            return NextResponse.json({error:"file not found"},{status:400})
+        const body = await request.json();
+        const title = typeof body.title === "string" ? body.title.trim() : "";
+        const description = typeof body.description === "string" ? body.description : "";
+        const publicId = typeof body.publicId === "string" ? body.publicId : "";
+        const originalSize = Number(body.originalSize ?? 0);
+
+        if(!title){
+            return NextResponse.json({error:"title is required"},{status:400})
+        }
+        if(!publicId.startsWith("video-upload/")){
+            return NextResponse.json({error:"Invalid publicId"},{status:400})
         }
         if(!Number.isFinite(originalSize)){
             return NextResponse.json({error:"Invalid original size"},{status:400})
         }
-        const bytes=await file.arrayBuffer();//that's not buffer actually need to convert buffer
-        const buffer=Buffer.from(bytes)
 
-        const result=await new Promise<CloudinaryVideoUploadResult>(
-            (resolve,reject)=>{
-                const uploadStream=cloudinary.uploader.upload_stream(
-                    {
-                        resource_type:"video",
-                        folder:"video-upload",
-                        transformation:[
-                            {quality:"auto",fetch_format:"mp4"}
+        // Ask Cloudinary for the real size and duration instead of trusting the browser
+        const resource = await cloudinary.api.resource(publicId,{
+            resource_type:"video",
+            media_metadata:true,
+        })
 
-                        ]
-                    },
-                    (error,result)=>{
-                        if(error) reject(error);
-                        else if(result) resolve(result as CloudinaryVideoUploadResult);
-                        else reject(new Error("Cloudinary upload returned no result"));
-                    }
-                )
-
-                uploadStream.end(buffer)
-            }
-        )
         const video =await prisma.video.create({
             data:{
                 title,
                 description,
-                publicId:result.public_id,
+                publicId,
                 originalSize:originalSize,
-                compressedSize:String(result.bytes),
-                duration:result.duration || 0,
+                compressedSize:String(resource.bytes),
+                duration:resource.duration || 0,
             }
 
         })
 
-        return NextResponse.json({publicId:result.public_id,videoId:video.id},{status:200})
+        return NextResponse.json({publicId,videoId:video.id},{status:200})
 
     }catch (error){
         console.log("Upload video failed",error)
         return NextResponse.json({error:"Upload video failed"},{status:500})
-    }finally{
-        prisma.$disconnect()
     }
 }

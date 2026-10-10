@@ -10,22 +10,25 @@ function Home() {
 
   const [error, setError] = useState<Error | null>(null);
 
-  const fetchVideos = useCallback(async () => {
-    try {
-      const response = await axios.get("/api/videos");
-      if (Array.isArray(response.data)) {
-        setVideos(response.data);
-      } else {
-        throw new Error("Invalid response data format");
+  useEffect(() => {
+    const fetchVideos = async () => {
+      try {
+        const response = await axios.get("/api/videos");
+        if (Array.isArray(response.data)) {
+          setVideos(response.data);
+        } else {
+          throw new Error("Invalid response data format");
+        }
+      } catch (error) {
+        console.error("Error fetching videos:", error);
+        setError(
+          error instanceof Error ? error : new Error("Failed to fetch videos"),
+        );
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Error fetching videos:", error);
-      setError(
-        error instanceof Error ? error : new Error("Failed to fetch videos"),
-      );
-    } finally {
-      setLoading(false);
-    }
+    };
+    fetchVideos();
   }, []);
 
   const handleDownload = useCallback((url: string, title: string) => {
@@ -39,12 +42,12 @@ function Home() {
     document.body.removeChild(link);
   }, []);
 
-  useEffect(() => {
-    fetchVideos();
-  }, [fetchVideos]);
-
   if(loading){
     return <div>Loading...</div>;
+  }
+
+  if(error){
+    return <div className="alert alert-error">{error.message}</div>;
   }
 
   return( 
